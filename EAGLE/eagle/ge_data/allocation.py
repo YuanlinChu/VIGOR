@@ -15,7 +15,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 s = 0
 e = 68000 - 1
-# e = 68 - 1
 # gpus = [[0], [1], [2], [3], [4], [5], [6], [7]]
 # gpus = [[0]]
 gpus = [[0], [1], [2], [3]]

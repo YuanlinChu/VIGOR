@@ -13,7 +13,7 @@ def count_elements_in_json_array(file_path: str) -> int:
         raise ValueError("JSON 文件的顶层不是数组。")
 
 if __name__ == "__main__":
-    json_file = "llava_v1_5_mix665k_fixed.json"   # 修改为你的文件路径
+    json_file = "ShareGPT_V3_unfiltered_cleaned_split.json"   # 修改为你的文件路径
     try:
         count = count_elements_in_json_array(json_file)
         print(f"JSON文件中共有 {count} 个元素")

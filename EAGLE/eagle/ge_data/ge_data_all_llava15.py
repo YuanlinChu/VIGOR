@@ -17,6 +17,16 @@ bigname=args.model
 image_data_path=args.image_data_path
 json_data_path=args.json_data_path
 
+# 添加调试信息，打印参数值
+print(f"参数信息: model={bigname}, image_data_path={image_data_path}, json_data_path={json_data_path}")
+print(f"image_data_path类型: {type(image_data_path)}")
+print(f"image_data_path是否为None: {image_data_path is None}")
+print(f"image_data_path的值: '{image_data_path}'")
+# 如果image_data_path是空字符串或字符串"None"，将其设置为None
+if image_data_path == "" or image_data_path == "None":
+    print(f"image_data_path是'{image_data_path}'，将其设置为None")
+    image_data_path = None
+
 import os
 # args.gpu_index.append(args.gpu_index[0] + 4) 
 os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_index)[1:-1]
@@ -118,39 +128,122 @@ def build_dataset_rank(
             "image_size": []
         }
         for i in range(len(examples['id'])):
-            conv_mode = "llava_v1"
-            conv = conv_templates[conv_mode].copy()
-            conv.system = ""
-            roles = {"human": conv.roles[0], "gpt": conv.roles[1]}
-            source = examples['conversations'][i]
-            if roles[source[0]["from"]] != conv.roles[0]:
-                source = source[1:]
-            conv.messages = []
-            for j, sentence in enumerate(source):
-                role = roles[sentence["from"]]
-                assert role == conv.roles[j % 2], f"{i}"
-                if sentence["from"] == "gpt":
-                    sentence["value"] = " " + sentence["value"]
-                conv.append_message(role, sentence["value"])
+            try:
+                conv_mode = "llava_v1"
+                conv = conv_templates[conv_mode].copy()
+                conv.system = ""
+                roles = {"human": conv.roles[0], "gpt": conv.roles[1]}
+                
+                # 添加调试信息
+                print(f"处理对话 {i}")
+                
+                # 检查对话是否为空
+                if 'conversations' not in examples or i >= len(examples['conversations']) or not examples['conversations'][i]:
+                    print(f"警告：对话 {i} 为空或不存在，跳过")
+                    continue
+                    
+                source = examples['conversations'][i]
+                print(f"对话 {i} 长度: {len(source)}")
+                
+                # 检查第一条消息是否存在
+                if not source or len(source) == 0:
+                    print(f"警告：对话 {i} 没有消息，跳过")
+                    continue
+                    
+                # 检查第一条消息的格式
+                if "from" not in source[0]:
+                    print(f"警告：对话 {i} 的第一条消息格式错误，跳过")
+                    continue
+                    
+                if roles[source[0]["from"]] != conv.roles[0]:
+                    print(f"对话 {i} 不是以人类开始，调整顺序")
+                    source = source[1:]
+                    
+                # 检查调整后的对话是否为空
+                if not source or len(source) == 0:
+                    print(f"警告：调整后对话 {i} 没有消息，跳过")
+                    continue
+                    
+                conv.messages = []
+                for j, sentence in enumerate(source):
+                    # 检查消息格式
+                    if "from" not in sentence or "value" not in sentence:
+                        print(f"警告：对话 {i} 的第 {j} 条消息格式错误，跳过此消息")
+                        continue
+                        
+                    role = roles[sentence["from"]]
+                    # 放宽角色顺序限制，只打印警告而不中断
+                    expected_role = conv.roles[j % 2]
+                    if role != expected_role:
+                        print(f"警告：对话 {i} 的第 {j} 条消息角色顺序不符合预期 (预期 {expected_role}, 实际 {role})")
+                    
+                    if sentence["from"] == "gpt":
+                        sentence["value"] = " " + sentence["value"]
+                    conv.append_message(role, sentence["value"])
+            except Exception as e:
+                print(f"处理对话 {i} 时出错: {str(e)}")
+                continue
             conversation = conv.get_prompt()
             if not tokenizer.pad_token_id:
                 tokenizer.pad_token_id = tokenizer.unk_token_id
 
             image_tensor = None
             image_size = None
-            # 检查图片是否存在且可以加载
-            if "image" not in examples or examples["image"][i] is None:
-                # 跳过没有图片的样本
+            # 检查是否需要处理图像
+            try:
+                # 使用全局变量，避免局部变量引用错误
+                global image_data_path
+                # 再次检查image_data_path是否为空字符串或"None"，如果是则设为None
+                if image_data_path == "" or image_data_path == "None":
+                    image_data_path = None
+                    
+                if image_data_path is not None and image_data_path.strip() != "":
+                    # 如果提供了有效的image_data_path，则需要处理图像
+                    print(f"对话 {i}: 检查图像数据，image_data_path={image_data_path}")
+                    
+                    # 检查图片字段是否存在
+                    if "image" not in examples:
+                        print(f"警告：对话 {i} 没有image字段，跳过")
+                        continue
+                        
+                    # 检查索引是否有效
+                    if i >= len(examples["image"]):
+                        print(f"警告：对话 {i} 的image索引超出范围，跳过")
+                        continue
+                        
+                    # 检查图片是否为None
+                    if examples["image"][i] is None:
+                        print(f"警告：对话 {i} 的图片为None，跳过")
+                        continue
+                    
+                    # 构建图片路径并尝试加载
+                    image_path = os.path.join(image_data_path, examples["image"][i])
+                    print(f"对话 {i}: 尝试加载图片 {image_path}")
+                    
+                    image = load_image(image_path)
+                    if image is None:
+                        print(f"警告：对话 {i} 的图片 {image_path} 加载失败，跳过")
+                        continue
+                    
+                    print(f"对话 {i}: 图片加载成功，大小为 {image.size}")
+                    image_size = image.size
+                    
+                    # 处理图片
+                    try:
+                        image_tensor = process_images([image], image_processor, {"image_aspect_ratio": "pad"})
+                        print(f"对话 {i}: 图片处理成功")
+                    except Exception as e:
+                        print(f"警告：对话 {i} 的图片处理失败: {str(e)}，跳过")
+                        continue
+                else:
+                    # 如果没有提供image_data_path，则只处理文本部分
+                    print(f"对话 {i}: 无image_data_path，仅处理文本")
+                    image_tensor = None
+            except Exception as e:
+                print(f"处理对话 {i} 的图像时出错: {str(e)}")
+                image_tensor = None
+                image_size = None
                 continue
-                
-            image_path = os.path.join(image_data_path, examples["image"][i])
-            image = load_image(image_path)
-            if image is None:
-                # 跳过图片加载失败的样本
-                continue
-                
-            image_size = image.size
-            image_tensor = process_images([image], image_processor, {"image_aspect_ratio": "pad"})
 
             input_ids = tokenizer_image_token(
                     conversation, 
@@ -231,31 +324,84 @@ bigmodel.eval()
 
 @torch.no_grad()
 def ge(data):
-    input_ids = data["input_ids"].cuda()
-    image = None
-    image_size = None
-    if data["image"] != None:
-        image = data["image"].to(dtype=torch.float16).cuda()
-        image_size = data["image_size"].cuda()
-        # import math
-        # print("image_token_num",math.floor(image_size[0]/14)*math.floor(image_size[1]/14))
-        # print(image.shape)
-    # import pdb
-    # pdb.set_trace()
-    inputs_embeds,_ = bigmodel.get_inputs_embeds(input_ids, image, image_size)
-
-    outs_big = bigmodel(inputs_embeds = inputs_embeds, output_hidden_states=True)
-
-    # outs_big = bigmodel(input_ids.cuda(), output_hidden_states=True)
-    hidden_state_big = outs_big.hidden_states[-1]
-    max_prob_tokens_big = torch.argmax(outs_big.logits, dim=-1)
-    probs = torch.softmax(outs_big.logits, dim=-1)
-    maxp = probs[0].max(dim=1).values
-
-
-    td={"input_ids":input_ids.cpu()[0],"inputs_embeds":inputs_embeds.cpu()[0],"hidden_state":hidden_state_big.cpu()[0],"loss_mask":data["loss_mask"].cpu()[0]}
-
-    return td
+    try:
+        print(f"处理数据: {data.keys()}")
+        
+        # 检查必要的字段是否存在
+        required_fields = ["input_ids", "loss_mask"]
+        for field in required_fields:
+            if field not in data:
+                print(f"错误: 数据中缺少必要字段 {field}")
+                return None
+        
+        # 检查input_ids的形状
+        print(f"input_ids形状: {data['input_ids'].shape}")
+        if len(data['input_ids'].shape) == 0 or data['input_ids'].numel() == 0:
+            print("错误: input_ids为空")
+            return None
+            
+        input_ids = data["input_ids"].cuda()
+        image = None
+        image_size = None
+        
+        # 处理图像数据
+        if "image" in data and data["image"] is not None:
+            print("处理图像数据")
+            try:
+                image = data["image"].to(dtype=torch.float16).cuda()
+                if "image_size" in data and data["image_size"] is not None:
+                    image_size = data["image_size"].cuda()
+                    print(f"图像大小: {image_size}")
+                else:
+                    print("警告: 有图像但缺少image_size")
+            except Exception as e:
+                print(f"处理图像时出错: {str(e)}")
+                # 如果图像处理失败，继续处理文本部分
+                image = None
+                image_size = None
+        
+        # 获取输入嵌入
+        try:
+            print("获取输入嵌入")
+            inputs_embeds, _ = bigmodel.get_inputs_embeds(input_ids, image, image_size)
+        except Exception as e:
+            print(f"获取输入嵌入时出错: {str(e)}")
+            return None
+        
+        # 运行模型
+        try:
+            print("运行模型")
+            outs_big = bigmodel(inputs_embeds=inputs_embeds, output_hidden_states=True)
+        except Exception as e:
+            print(f"运行模型时出错: {str(e)}")
+            return None
+        
+        # 处理模型输出
+        try:
+            print("处理模型输出")
+            hidden_state_big = outs_big.hidden_states[-1]
+            max_prob_tokens_big = torch.argmax(outs_big.logits, dim=-1)
+            probs = torch.softmax(outs_big.logits, dim=-1)
+            maxp = probs[0].max(dim=1).values
+            
+            # 检查loss_mask的形状
+            print(f"loss_mask形状: {data['loss_mask'].shape}")
+            
+            # 创建输出字典
+            td = {
+                "input_ids": input_ids.cpu()[0],
+                "inputs_embeds": inputs_embeds.cpu()[0],
+                "hidden_state": hidden_state_big.cpu()[0],
+                "loss_mask": data["loss_mask"].cpu()[0]
+            }
+            print("数据处理成功")
+            return td
+        except Exception as e:
+            print(f"处理模型输出时出错: {str(e)}")
+            return None
+    except Exception as e:
+        print(f"ge函数中出现未处理的错误: {str(e)}")
+        return None
 
 outdir = f'{args.outdir}/{args.index}'
 if not os.path.exists(outdir):
@@ -269,9 +415,14 @@ def writedata(name,data_point):
     torch.save(data_point, f'{name}/data_{idx}.ckpt')
 
 for id,data in tqdm(enumerate(ds), total=len(ds), unit="samples"):
-    # if id % 100==0:
-    #     print(id,end="\t")
-    # if id % 1000 == 0:
-    #     print("")
-    outdata = ge(data)
-    writedata(outdir,outdata)
+    print(f"\n处理样本 {id}")
+    try:
+        outdata = ge(data)
+        if outdata is None:
+            print(f"警告：样本 {id} 处理失败，跳过")
+            continue
+        writedata(outdir,outdata)
+        print(f"样本 {id} 处理成功并保存")
+    except Exception as e:
+        print(f"处理样本 {id} 时出错: {str(e)}，跳过")
+        continue
