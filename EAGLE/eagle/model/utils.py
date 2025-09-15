@@ -1,10 +1,12 @@
 import copy
 import random
 
-# typing 
+# typing
 from typing import List, Tuple
 import time
 import torch
+
+from .visual_gate import visual_gate
 
 # TODO
 # from transformers import LlamaTokenizer
@@ -351,6 +353,7 @@ def tree_decoding(
         output_orig=True,
         past_key_values=past_key_values,
         position_ids=position_ids,
+        output_attentions=True,
     )
 
 
@@ -366,6 +369,11 @@ def evaluate_posterior(
         logits: torch.Tensor,
         candidates: torch.Tensor,
         logits_processor,
+        attn_maps=None,
+        word_spans=None,
+        last_layers: int = 1,
+        tau_vis: float = 0.0,
+        lam: float = 1.0,
 ):
     """
     Evaluate the posterior probabilities of the candidates based on the provided logits and choose the best candidate.
@@ -384,6 +392,13 @@ def evaluate_posterior(
     - best_candidate (torch.Tensor): Index of the chosen best candidate.
     - accept_length (int): Length of the accepted candidate sequence.
     """
+    vis_scores = None
+    if attn_maps is not None and word_spans is not None:
+        try:
+            vis_scores = visual_gate(attn_maps, word_spans, last_layers, tau_vis, lam)
+        except Exception:
+            vis_scores = None
+
     # Greedy decoding based on temperature value
     if logits_processor is None:
         # Find the tokens that match the maximum logits for each position in the sequence
@@ -399,7 +414,7 @@ def evaluate_posterior(
         else:
             best_candidate = torch.argmax(candidates_accept_length).to(torch.long)
 
-        return best_candidate, accept_length, logits[best_candidate, accept_length]
+        return best_candidate, accept_length, logits[best_candidate, accept_length], vis_scores
 
     else:
         accept_length = 1
@@ -440,7 +455,7 @@ def evaluate_posterior(
         else:
             gt_logits = logits[best_candidate, accept_length - 1]
             sample_p = torch.softmax(gt_logits, dim=0)
-        return torch.tensor(best_candidate), accept_length - 1, sample_p
+        return torch.tensor(best_candidate), accept_length - 1, sample_p, vis_scores
 
 
 @torch.no_grad()
