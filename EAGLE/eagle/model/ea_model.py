@@ -180,6 +180,7 @@ class EaModel(nn.Module):
             past_key_values=None,
             output_orig=False,
             position_ids=None,
+            output_attentions=False,
     ):
 
         with torch.inference_mode():
@@ -190,6 +191,7 @@ class EaModel(nn.Module):
                     attention_mask=attention_mask,
                     past_key_values=past_key_values,
                     position_ids=position_ids,
+                    output_attentions=output_attentions,
                 )
             else:
                 outputs = self.base_model.model(
@@ -197,6 +199,7 @@ class EaModel(nn.Module):
                     attention_mask=attention_mask,
                     past_key_values=past_key_values,
                     position_ids=position_ids,
+                    output_attentions=output_attentions,
                 )
             if output_orig:
                 orig = self.base_model.lm_head(outputs[0])
@@ -218,6 +221,9 @@ class EaModel(nn.Module):
             max_new_tokens=512,
             max_length=2048,
             log=False,
+            last_layers: int = 1,
+            tau_vis: float = 0.0,
+            lam: float = 1.0,
     ):
         
         max_length=max_length-self.ea_layer.total_tokens-10
@@ -259,6 +265,8 @@ class EaModel(nn.Module):
         )
         new_token = 0
 
+        vis_history = []
+
         for idx in range(max_length):
             #with Timer("all"):
             self.base_model.model.tree_mask = tree_mask
@@ -277,9 +285,20 @@ class EaModel(nn.Module):
             #logits = logits[0, retrieve_indices]
             draft_tokens=torch.cat((draft_tokens,padding),dim=1)
             candidates=draft_tokens[0,retrieve_indices]
-            best_candidate, accept_length, sample_p = evaluate_posterior(
-                logits, candidates, logits_processor
+            best_candidate, accept_length, sample_p, vis_scores = evaluate_posterior(
+                logits,
+                candidates,
+                logits_processor,
+                getattr(outputs, "attentions", None),
+                retrieve_indices,
+                last_layers=last_layers,
+                tau_vis=tau_vis,
+                lam=lam,
             )
+            if vis_scores is not None:
+                vis_history.append(vis_scores.cpu())
+                if vis_scores[best_candidate].item() < tau_vis:
+                    accept_length = 0
             self.acclen += accept_length
             self.accnum += 1
             # print(accept_length)
